@@ -1,0 +1,283 @@
+---
+# Test Namespace for osquery-operator
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: osquery-system
+  labels:
+    app.kubernetes.io/name: osquery-operator
+---
+# Test OsqueryAgent deployment
+apiVersion: osquery.burdz.net/v1alpha1
+kind: OsqueryAgent
+metadata:
+  name: default
+spec:
+  image: osquery/osquery:5.8.2-ubuntu22.04
+  nodeSelector:
+    kubernetes.io/os: linux
+  tolerations:
+    - operator: Exists
+  flags:
+    config_refresh: "300"
+    distributed_interval: "60"
+    disable_events: "false"
+    enable_file_events: "true"
+  packSelector:
+    matchLabels:
+      osquery.burdz.net/enabled: "true"
+  eventBridge:
+    enabled: true
+    createEvents: true
+    createQueryResults: true
+    resultRetention: "72h"
+  resources:
+    requests:
+      memory: "64Mi"
+      cpu: "50m"
+    limits:
+      memory: "256Mi"
+      cpu: "200m"
+  eventBridgeResources:
+    requests:
+      memory: "32Mi"
+      cpu: "10m"
+    limits:
+      memory: "64Mi"
+      cpu: "50m"
+---
+# Test OsqueryPack for security baseline
+apiVersion: osquery.burdz.net/v1alpha1
+kind: OsqueryPack
+metadata:
+  name: security-baseline
+  labels:
+    osquery.burdz.net/enabled: "true"
+    tier: baseline
+spec:
+  platform: linux
+  queries:
+    - name: listening_ports
+      description: "All listening ports and the process using them"
+      query: |
+        SELECT DISTINCT p.name, p.path, lp.port, lp.protocol, lp.address, p.pid
+        FROM listening_ports lp
+        JOIN processes p ON lp.pid = p.pid
+        WHERE lp.port NOT IN (10250, 10255, 10256)
+        AND lp.address != '127.0.0.1';
+      interval: 60
+      severity: info
+
+    - name: setuid_binaries
+      description: "Binaries with setuid bit set"
+      query: |
+        SELECT path, username, groupname, permissions
+        FROM suid_bin
+        WHERE path NOT LIKE '/usr/bin/%'
+        AND path NOT LIKE '/usr/sbin/%'
+        AND path NOT LIKE '/bin/%'
+        AND path NOT LIKE '/sbin/%';
+      interval: 300
+      severity: high
+
+    - name: kernel_modules
+      description: "Currently loaded kernel modules"
+      query: "SELECT name, size, used_by, status FROM kernel_modules WHERE status = 'Live';"
+      interval: 300
+      severity: info
+      snapshot: true
+
+    - name: crontab_entries
+      description: "All crontab entries"
+      query: "SELECT * FROM crontab;"
+      interval: 300
+      severity: medium
+
+    - name: authorized_keys
+      description: "SSH authorized_keys for all users"
+      query: |
+        SELECT ak.*, u.username, u.directory
+        FROM users u
+        JOIN authorized_keys ak ON u.uid = ak.uid;
+      interval: 600
+      severity: medium
+---
+# Test OsqueryPack for container security
+apiVersion: osquery.burdz.net/v1alpha1
+kind: OsqueryPack
+metadata:
+  name: container-security
+  labels:
+    osquery.burdz.net/enabled: "true"
+    tier: container
+spec:
+  platform: linux
+  queries:
+    - name: docker_containers
+      description: "Running Docker containers"
+      query: "SELECT id, name, image, state, status FROM docker_containers;"
+      interval: 60
+      severity: info
+
+    - name: privileged_containers
+      description: "Containers running in privileged mode"
+      query: |
+        SELECT id, name, image, privileged, security_options
+        FROM docker_containers
+        WHERE privileged = 1;
+      interval: 60
+      severity: critical
+
+    - name: host_namespace_containers
+      description: "Containers using host namespaces"
+      query: |
+        SELECT id, name, image, pid_namespace, net_namespace
+        FROM docker_containers
+        WHERE pid_namespace = 'host' OR net_namespace = 'host';
+      interval: 60
+      severity: high
+
+    - name: container_processes
+      description: "Processes running inside containers"
+      query: |
+        SELECT c.name AS container_name, cp.pid, cp.name AS process_name, cp.cmdline, cp.uid
+        FROM docker_containers c
+        JOIN docker_container_processes cp ON cp.id = c.id;
+      interval: 120
+      severity: info
+
+    - name: suspicious_container_mounts
+      description: "Containers with sensitive host mounts"
+      query: |
+        SELECT m.id, c.name, c.image, m.source, m.destination, m.mode
+        FROM docker_container_mounts m
+        JOIN docker_containers c ON m.id = c.id
+        WHERE m.source IN ('/', '/etc', '/var/run/docker.sock', '/proc', '/sys')
+        OR m.source LIKE '/var/lib/kubelet%';
+      interval: 60
+      severity: critical
+---
+# Test OsqueryPack for incident response
+apiVersion: osquery.burdz.net/v1alpha1
+kind: OsqueryPack
+metadata:
+  name: incident-response
+  labels:
+    osquery.burdz.net/enabled: "true"
+    tier: ir
+spec:
+  platform: linux
+  queries:
+    - name: processes_with_deleted_exe
+      description: "Processes running from deleted executables"
+      query: |
+        SELECT pid, name, path, cmdline, on_disk, cwd, root
+        FROM processes
+        WHERE on_disk = 0;
+      interval: 30
+      severity: critical
+
+    - name: processes_from_tmp
+      description: "Processes running from /tmp, /dev/shm, or /var/tmp"
+      query: |
+        SELECT pid, name, path, cmdline, uid, parent
+        FROM processes
+        WHERE path LIKE '/tmp/%'
+        OR path LIKE '/dev/shm/%'
+        OR path LIKE '/var/tmp/%';
+      interval: 30
+      severity: critical
+
+    - name: hidden_processes
+      description: "Processes attempting to hide"
+      query: |
+        SELECT pid, name, path, cmdline
+        FROM processes
+        WHERE name LIKE '.%'
+        OR path LIKE '%/.%';
+      interval: 30
+      severity: high
+
+    - name: unusual_network_connections
+      description: "Outbound connections to non-standard ports"
+      query: |
+        SELECT DISTINCT p.name, p.pid, s.remote_address, s.remote_port, s.state
+        FROM process_open_sockets s
+        JOIN processes p ON s.pid = p.pid
+        WHERE s.remote_port NOT IN (53, 80, 443, 8080, 8443)
+        AND s.remote_address NOT LIKE '10.%'
+        AND s.remote_address NOT LIKE '172.1%'
+        AND s.remote_address NOT LIKE '172.2%'
+        AND s.remote_address NOT LIKE '172.3%'
+        AND s.remote_address NOT LIKE '192.168.%'
+        AND s.remote_address != ''
+        AND s.remote_address != '127.0.0.1';
+      interval: 30
+      severity: high
+
+    - name: reverse_shells
+      description: "Potential reverse shell processes"
+      query: |
+        SELECT pid, name, cmdline, parent
+        FROM processes
+        WHERE cmdline LIKE '%/dev/tcp/%'
+        OR cmdline LIKE '%nc -e%'
+        OR cmdline LIKE '%bash -i%'
+        OR cmdline LIKE '%python%import socket%'
+        OR cmdline LIKE '%perl%socket%';
+      interval: 15
+      severity: critical
+---
+# Test OsqueryAlert for cryptominer detection
+apiVersion: osquery.burdz.net/v1alpha1
+kind: OsqueryAlert
+metadata:
+  name: cryptominer-detected
+  namespace: osquery-system
+spec:
+  querySelector:
+    queryName: processes_from_tmp
+  condition:
+    type: rowMatch
+    rowMatch:
+      - field: name
+        regex: "(xmrig|minerd|cryptonight|stratum|pool)"
+      - field: cmdline
+        regex: "(stratum\\+tcp|--coin|--algo|nicehash)"
+  severity: critical
+  throttle:
+    period: "15m"
+    maxAlerts: 1
+  notify:
+    kubernetes:
+      createEvent: true
+      eventType: Warning
+    # slack:
+    #   webhookSecretRef:
+    #     name: slack-security-webhook
+    #     namespace: osquery-system
+---
+# Test OsqueryAlert for privileged containers
+apiVersion: osquery.burdz.net/v1alpha1
+kind: OsqueryAlert
+metadata:
+  name: privileged-container-alert
+  namespace: osquery-system
+spec:
+  querySelector:
+    queryName: privileged_containers
+  condition:
+    type: rowCount
+    rowCount:
+      operator: gt
+      value: 0
+  severity: high
+  throttle:
+    period: "5m"
+    maxAlerts: 3
+    groupBy:
+      - name
+  notify:
+    kubernetes:
+      createEvent: true
+      eventType: Warning

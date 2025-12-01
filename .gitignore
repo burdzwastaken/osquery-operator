@@ -1,0 +1,25 @@
+# binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+# go
+go.work
+go.work.sum
+bin/
+
+# environment
+.env
+
+# nix
+result
+result-*
+.direnv/
+
+# build artifacts
+dist/
+cover.out

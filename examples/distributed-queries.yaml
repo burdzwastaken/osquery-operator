@@ -1,0 +1,100 @@
+---
+# Hunt for Log4Shell indicators across all nodes
+apiVersion: osquery.burdz.net/v1alpha1
+kind: DistributedQuery
+metadata:
+  name: hunt-log4shell
+  namespace: osquery-system
+spec:
+  query: |
+    SELECT path, filename, size, mtime, sha256
+    FROM hash
+    WHERE path IN (
+      SELECT path FROM file
+      WHERE (
+        path LIKE '/var/log/%.log'
+        OR path LIKE '/opt/%/logs/%.log'
+        OR path LIKE '/home/%/logs/%.log'
+      )
+      AND size < 104857600
+    );
+  timeout: "120s"
+  ttl: "24h"
+  cardinality: 5000
+---
+# Hunt for processes connecting to known C2 IPs
+apiVersion: osquery.burdz.net/v1alpha1
+kind: DistributedQuery
+metadata:
+  name: hunt-c2-connections
+  namespace: osquery-system
+spec:
+  query: |
+    SELECT DISTINCT
+      p.pid,
+      p.name,
+      p.path,
+      p.cmdline,
+      s.remote_address,
+      s.remote_port,
+      s.state
+    FROM process_open_sockets s
+    JOIN processes p ON s.pid = p.pid
+    WHERE s.remote_address IN (
+      '185.220.101.1',
+      '45.33.32.156',
+      '192.99.221.77'
+    )
+    OR s.remote_address LIKE '%.onion';
+  timeout: "60s"
+  ttl: "12h"
+  cardinality: 1000
+---
+# Quick check: find all SSH keys across the cluster
+apiVersion: osquery.burdz.net/v1alpha1
+kind: DistributedQuery
+metadata:
+  name: find-ssh-keys
+  namespace: osquery-system
+spec:
+  query: |
+    SELECT
+      f.path,
+      f.filename,
+      f.size,
+      f.mtime,
+      u.username,
+      u.uid
+    FROM file f
+    JOIN users u ON f.path LIKE '/home/' || u.username || '/.ssh/%'
+    WHERE f.filename LIKE 'id_%'
+    AND f.filename NOT LIKE '%.pub';
+  nodeSelector: {}  # All nodes
+  timeout: "90s"
+  ttl: "1h"
+  cardinality: 500
+---
+# Find processes that spawned from kubectl exec
+apiVersion: osquery.burdz.net/v1alpha1
+kind: DistributedQuery
+metadata:
+  name: kubectl-exec-processes
+  namespace: osquery-system
+spec:
+  query: |
+    WITH RECURSIVE process_tree AS (
+      SELECT pid, name, path, cmdline, parent, 0 AS depth
+      FROM processes
+      WHERE cmdline LIKE '%kubectl%exec%'
+
+      UNION ALL
+
+      SELECT p.pid, p.name, p.path, p.cmdline, p.parent, pt.depth + 1
+      FROM processes p
+      JOIN process_tree pt ON p.parent = pt.pid
+      WHERE pt.depth < 5
+    )
+    SELECT * FROM process_tree WHERE depth > 0;
+  timeout: "60s"
+  ttl: "6h"
+  cardinality: 200

@@ -1,0 +1,143 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.19.0
+  name: queryresults.osquery.burdz.net
+spec:
+  group: osquery.burdz.net
+  names:
+    kind: QueryResult
+    listKind: QueryResultList
+    plural: queryresults
+    shortNames:
+    - oqr
+    - qr
+    singular: queryresult
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.queryName
+      name: Query
+      type: string
+    - jsonPath: .spec.nodeName
+      name: Node
+      type: string
+    - jsonPath: .status.severity
+      name: Severity
+      type: string
+    - jsonPath: .spec.rows
+      name: Rows
+      type: integer
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: QueryResult stores query results in the cluster
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: QueryResultSpec defines the desired state of QueryResult
+            properties:
+              action:
+                description: 'Action: added, removed, snapshot'
+                enum:
+                - added
+                - removed
+                - snapshot
+                type: string
+              decorations:
+                additionalProperties:
+                  type: string
+                description: Decorations from osquery (host info, etc)
+                type: object
+              distributedQueryRef:
+                description: DistributedQueryRef if this came from a distributed query
+                type: string
+              nodeName:
+                description: NodeName where the query ran
+                type: string
+              packName:
+                description: PackName if this came from a pack (empty for distributed
+                  queries)
+                type: string
+              queryName:
+                description: QueryName that produced this result
+                type: string
+              rows:
+                description: Rows contains the query results
+                items:
+                  additionalProperties:
+                    type: string
+                  type: object
+                type: array
+              timestamp:
+                description: Timestamp when the query executed
+                format: date-time
+                type: string
+            required:
+            - action
+            - nodeName
+            - queryName
+            - rows
+            - timestamp
+            type: object
+          status:
+            description: QueryResultStatus defines the observed state of QueryResult
+            properties:
+              acknowledged:
+                description: Acknowledged marks if this result has been reviewed
+                type: boolean
+              acknowledgedAt:
+                description: AcknowledgedAt time of acknowledgement
+                format: date-time
+                type: string
+              acknowledgedBy:
+                description: AcknowledgedBy user who acknowledged
+                type: string
+              alertsFired:
+                description: AlertsFired lists alerts triggered by this result
+                items:
+                  type: string
+                type: array
+              expiresAt:
+                description: ExpiresAt when this result will be auto-deleted
+                format: date-time
+                type: string
+              severity:
+                description: Severity calculated for this result
+                enum:
+                - info
+                - low
+                - medium
+                - high
+                - critical
+                type: string
+            type: object
+        required:
+        - metadata
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
