@@ -32,6 +32,8 @@ type OsqueryAgentReconciler struct {
 // +kubebuilder:rbac:groups=osquery.burdz.net,resources=osqueryagents/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=osquery.burdz.net,resources=osqueryagents/finalizers,verbs=update
 // +kubebuilder:rbac:groups=osquery.burdz.net,resources=osquerypacks,verbs=get;list;watch
+// +kubebuilder:rbac:groups=osquery.burdz.net,resources=fileintegritypolicies,verbs=get;list;watch
+// +kubebuilder:rbac:groups=osquery.burdz.net,resources=fileintegritypolicies/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=apps,resources=daemonsets,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=core,resources=configmaps,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=core,resources=nodes,verbs=get;list;watch
@@ -66,7 +68,12 @@ func (r *OsqueryAgentReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		return ctrl.Result{}, err
 	}
 
-	config, err := r.generateConfig(agent, packs)
+	fimPolicies, err := r.getMatchingFIMPolicies(ctx, agent)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+
+	config, err := r.generateConfig(agent, packs, fimPolicies)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -113,13 +120,52 @@ func (r *OsqueryAgentReconciler) getMatchingPacks(ctx context.Context, agent *os
 	return activePacks, nil
 }
 
+func (r *OsqueryAgentReconciler) getMatchingFIMPolicies(ctx context.Context, agent *osqueryv1alpha1.OsqueryAgent) ([]osqueryv1alpha1.FileIntegrityPolicy, error) {
+	fimList := &osqueryv1alpha1.FileIntegrityPolicyList{}
+
+	if err := r.List(ctx, fimList); err != nil {
+		return nil, err
+	}
+
+	var activePolicies []osqueryv1alpha1.FileIntegrityPolicy
+	for _, policy := range fimList.Items {
+		if policy.Spec.Disabled {
+			continue
+		}
+
+		if len(policy.Spec.NodeSelector) > 0 {
+			if len(agent.Spec.NodeSelector) > 0 {
+				if !nodeSelectorOverlaps(agent.Spec.NodeSelector, policy.Spec.NodeSelector) {
+					continue
+				}
+			}
+		}
+
+		activePolicies = append(activePolicies, policy)
+	}
+
+	return activePolicies, nil
+}
+
+func nodeSelectorOverlaps(agentSelector, policySelector map[string]string) bool {
+	for k, v := range policySelector {
+		if agentVal, ok := agentSelector[k]; ok && agentVal != v {
+			return false
+		}
+	}
+	return true
+}
+
 // OsqueryConfig represents the osquery JSON configuration file structure.
 // See https://osquery.readthedocs.io/en/stable/deployment/configuration/
 type OsqueryConfig struct {
-	Options    map[string]any           `json:"options,omitempty"`
-	Schedule   map[string]ScheduleEntry `json:"schedule,omitempty"`
-	Packs      map[string]PackConfig    `json:"packs,omitempty"`
-	Decorators map[string][]string      `json:"decorators,omitempty"`
+	Options      map[string]any           `json:"options,omitempty"`
+	Schedule     map[string]ScheduleEntry `json:"schedule,omitempty"`
+	Packs        map[string]PackConfig    `json:"packs,omitempty"`
+	Decorators   map[string][]string      `json:"decorators,omitempty"`
+	FilePaths    map[string][]string      `json:"file_paths,omitempty"`
+	ExcludePaths map[string][]string      `json:"exclude_paths,omitempty"`
+	FileAccesses []string                 `json:"file_accesses,omitempty"`
 }
 
 // ScheduleEntry defines a scheduled query in osquery config.
@@ -143,11 +189,13 @@ type PackQueryConfig struct {
 	Description string `json:"description,omitempty"`
 }
 
-func (r *OsqueryAgentReconciler) generateConfig(agent *osqueryv1alpha1.OsqueryAgent, packs []osqueryv1alpha1.OsqueryPack) (*OsqueryConfig, error) {
+func (r *OsqueryAgentReconciler) generateConfig(agent *osqueryv1alpha1.OsqueryAgent, packs []osqueryv1alpha1.OsqueryPack, fimPolicies []osqueryv1alpha1.FileIntegrityPolicy) (*OsqueryConfig, error) {
 	config := &OsqueryConfig{
-		Options:  make(map[string]any),
-		Schedule: make(map[string]ScheduleEntry),
-		Packs:    make(map[string]PackConfig),
+		Options:      make(map[string]any),
+		Schedule:     make(map[string]ScheduleEntry),
+		Packs:        make(map[string]PackConfig),
+		FilePaths:    make(map[string][]string),
+		ExcludePaths: make(map[string][]string),
 		Decorators: map[string][]string{
 			"load": {
 				"SELECT uuid AS host_uuid FROM system_info;",
@@ -204,6 +252,48 @@ func (r *OsqueryAgentReconciler) generateConfig(agent *osqueryv1alpha1.OsqueryAg
 		}
 
 		config.Packs[pack.Name] = packConfig
+	}
+
+	if len(fimPolicies) > 0 {
+		if _, ok := config.Options["enable_file_events"]; !ok {
+			config.Options["enable_file_events"] = true
+		}
+
+		var accessCategories []string
+		minInterval := 300
+		for _, policy := range fimPolicies {
+			if policy.Spec.Interval > 0 && policy.Spec.Interval < minInterval {
+				minInterval = policy.Spec.Interval
+			}
+		}
+
+		for _, policy := range fimPolicies {
+			category := policy.Spec.Category
+			if category == "" {
+				category = policy.Name
+			}
+
+			if len(policy.Spec.Paths) > 0 {
+				config.FilePaths[category] = append(config.FilePaths[category], policy.Spec.Paths...)
+			}
+
+			if len(policy.Spec.Exclude) > 0 {
+				config.ExcludePaths[category] = append(config.ExcludePaths[category], policy.Spec.Exclude...)
+			}
+
+			if len(policy.Spec.Accesses) > 0 {
+				accessCategories = append(accessCategories, category)
+			}
+		}
+
+		if len(accessCategories) > 0 {
+			config.FileAccesses = accessCategories
+		}
+
+		config.Schedule["file_events"] = ScheduleEntry{
+			Query:    "SELECT * FROM file_events;",
+			Interval: minInterval,
+		}
 	}
 
 	return config, nil

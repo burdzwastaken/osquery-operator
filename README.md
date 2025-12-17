@@ -6,6 +6,7 @@ A Kubernetes operator for managing [osquery](https://osquery.io/) deployments as
 
 - **OsqueryAgent** - Deploy osquery as a DaemonSet with automatic config generation
 - **OsqueryPack** - Define query packs as CRDs, automatically distributed to agents
+- **FileIntegrityPolicy** - Configure file integrity monitoring (FIM) for critical paths
 - **DistributedQuery** - Run ad-hoc queries across all nodes
 - **QueryResult** - Store results in-cluster as custom resources
 - **OsqueryAlert** - Alert on query results with Slack & webhook support
@@ -72,6 +73,29 @@ spec:
       query: "SELECT * FROM suid_bin WHERE path NOT LIKE '/usr/%';"
       interval: 300
       severity: high
+```
+
+### FileIntegrityPolicy
+
+Monitor files and directories for changes:
+
+```yaml
+apiVersion: osquery.burdz.net/v1alpha1
+kind: FileIntegrityPolicy
+metadata:
+  name: critical-binaries
+  namespace: osquery-system
+spec:
+  paths:
+    - /usr/bin/sudo
+    - /usr/bin/ssh
+    - /etc/passwd
+    - /etc/shadow
+    - /etc/sudoers
+  exclude:
+    - /etc/*.swp
+  severity: critical
+  interval: 60
 ```
 
 ### DistributedQuery

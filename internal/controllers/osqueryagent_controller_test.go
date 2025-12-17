@@ -72,7 +72,7 @@ func TestGenerateConfig(t *testing.T) {
 		},
 	}
 
-	config, err := r.generateConfig(agent, packs)
+	config, err := r.generateConfig(agent, packs, nil)
 	require.NoError(t, err)
 	require.NotNil(t, config)
 
@@ -136,7 +136,7 @@ func TestGenerateConfigJSON(t *testing.T) {
 		},
 	}
 
-	config, err := r.generateConfig(agent, packs)
+	config, err := r.generateConfig(agent, packs, nil)
 	require.NoError(t, err)
 
 	jsonBytes, err := json.MarshalIndent(config, "", "  ")
@@ -164,7 +164,7 @@ func TestGenerateConfigEmptyPacks(t *testing.T) {
 		},
 	}
 
-	config, err := r.generateConfig(agent, []osqueryv1alpha1.OsqueryPack{})
+	config, err := r.generateConfig(agent, []osqueryv1alpha1.OsqueryPack{}, nil)
 	require.NoError(t, err)
 	require.NotNil(t, config)
 
@@ -514,7 +514,7 @@ func TestGenerateConfigStdoutLogging(t *testing.T) {
 		},
 	}
 
-	config, err := r.generateConfig(agent, []osqueryv1alpha1.OsqueryPack{})
+	config, err := r.generateConfig(agent, []osqueryv1alpha1.OsqueryPack{}, nil)
 	require.NoError(t, err)
 
 	assert.Equal(t, "stdout", config.Options["logger_plugin"])
@@ -534,7 +534,7 @@ func TestGenerateConfigFilesystemLoggingWithRotation(t *testing.T) {
 		Spec: osqueryv1alpha1.OsqueryAgentSpec{},
 	}
 
-	config, err := r.generateConfig(agent, []osqueryv1alpha1.OsqueryPack{})
+	config, err := r.generateConfig(agent, []osqueryv1alpha1.OsqueryPack{}, nil)
 	require.NoError(t, err)
 
 	assert.Equal(t, "filesystem", config.Options["logger_plugin"])
@@ -560,7 +560,7 @@ func TestGenerateConfigCustomLoggerPlugin(t *testing.T) {
 		},
 	}
 
-	config, err := r.generateConfig(agent, []osqueryv1alpha1.OsqueryPack{})
+	config, err := r.generateConfig(agent, []osqueryv1alpha1.OsqueryPack{}, nil)
 	require.NoError(t, err)
 
 	assert.Equal(t, "aws_kinesis", config.Options["logger_plugin"])
@@ -599,11 +599,229 @@ func TestConfigHashChangesWithContent(t *testing.T) {
 		},
 	}
 
-	config1, _ := r.generateConfig(agent, packs1)
-	config2, _ := r.generateConfig(agent, packs2)
+	config1, _ := r.generateConfig(agent, packs1, nil)
+	config2, _ := r.generateConfig(agent, packs2, nil)
 
 	json1, _ := json.Marshal(config1)
 	json2, _ := json.Marshal(config2)
 
 	assert.NotEqual(t, string(json1), string(json2), "Configs with different queries should produce different JSON")
+}
+
+func TestGenerateConfigWithFIM(t *testing.T) {
+	r := &OsqueryAgentReconciler{}
+
+	agent := &osqueryv1alpha1.OsqueryAgent{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "test-agent",
+		},
+		Spec: osqueryv1alpha1.OsqueryAgentSpec{},
+	}
+
+	fimPolicies := []osqueryv1alpha1.FileIntegrityPolicy{
+		{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "critical-binaries",
+			},
+			Spec: osqueryv1alpha1.FileIntegrityPolicySpec{
+				Paths: []string{
+					"/usr/bin/sudo",
+					"/usr/bin/ssh",
+					"/etc/passwd",
+				},
+				Exclude: []string{
+					"/etc/*.swp",
+				},
+				Interval: 60,
+				Severity: "critical",
+			},
+		},
+	}
+
+	config, err := r.generateConfig(agent, nil, fimPolicies)
+	require.NoError(t, err)
+	require.NotNil(t, config)
+
+	assert.Equal(t, true, config.Options["enable_file_events"])
+
+	require.Contains(t, config.FilePaths, "critical-binaries")
+	assert.ElementsMatch(t, []string{"/usr/bin/sudo", "/usr/bin/ssh", "/etc/passwd"}, config.FilePaths["critical-binaries"])
+
+	require.Contains(t, config.ExcludePaths, "critical-binaries")
+	assert.ElementsMatch(t, []string{"/etc/*.swp"}, config.ExcludePaths["critical-binaries"])
+
+	require.Contains(t, config.Schedule, "file_events")
+	assert.Equal(t, "SELECT * FROM file_events;", config.Schedule["file_events"].Query)
+	assert.Equal(t, 60, config.Schedule["file_events"].Interval)
+}
+
+func TestGenerateConfigWithFIMCategory(t *testing.T) {
+	r := &OsqueryAgentReconciler{}
+
+	agent := &osqueryv1alpha1.OsqueryAgent{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "test-agent",
+		},
+		Spec: osqueryv1alpha1.OsqueryAgentSpec{},
+	}
+
+	fimPolicies := []osqueryv1alpha1.FileIntegrityPolicy{
+		{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "my-policy",
+			},
+			Spec: osqueryv1alpha1.FileIntegrityPolicySpec{
+				Category: "etc",
+				Paths:    []string{"/etc/%%"},
+				Interval: 300,
+			},
+		},
+	}
+
+	config, err := r.generateConfig(agent, nil, fimPolicies)
+	require.NoError(t, err)
+
+	require.Contains(t, config.FilePaths, "etc")
+	assert.NotContains(t, config.FilePaths, "my-policy")
+}
+
+func TestGenerateConfigWithFIMAccesses(t *testing.T) {
+	r := &OsqueryAgentReconciler{}
+
+	agent := &osqueryv1alpha1.OsqueryAgent{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "test-agent",
+		},
+		Spec: osqueryv1alpha1.OsqueryAgentSpec{},
+	}
+
+	fimPolicies := []osqueryv1alpha1.FileIntegrityPolicy{
+		{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "sensitive-files",
+			},
+			Spec: osqueryv1alpha1.FileIntegrityPolicySpec{
+				Paths:    []string{"/etc/shadow"},
+				Accesses: []string{"read"},
+				Interval: 60,
+			},
+		},
+	}
+
+	config, err := r.generateConfig(agent, nil, fimPolicies)
+	require.NoError(t, err)
+
+	require.NotEmpty(t, config.FileAccesses)
+	assert.Contains(t, config.FileAccesses, "sensitive-files")
+}
+
+func TestGenerateConfigWithMultipleFIMPolicies(t *testing.T) {
+	r := &OsqueryAgentReconciler{}
+
+	agent := &osqueryv1alpha1.OsqueryAgent{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "test-agent",
+		},
+		Spec: osqueryv1alpha1.OsqueryAgentSpec{},
+	}
+
+	fimPolicies := []osqueryv1alpha1.FileIntegrityPolicy{
+		{
+			ObjectMeta: metav1.ObjectMeta{Name: "binaries"},
+			Spec: osqueryv1alpha1.FileIntegrityPolicySpec{
+				Paths:    []string{"/usr/bin/%%"},
+				Interval: 300,
+			},
+		},
+		{
+			ObjectMeta: metav1.ObjectMeta{Name: "configs"},
+			Spec: osqueryv1alpha1.FileIntegrityPolicySpec{
+				Paths:    []string{"/etc/%%"},
+				Interval: 60,
+			},
+		},
+	}
+
+	config, err := r.generateConfig(agent, nil, fimPolicies)
+	require.NoError(t, err)
+
+	assert.Len(t, config.FilePaths, 2)
+	assert.Contains(t, config.FilePaths, "binaries")
+	assert.Contains(t, config.FilePaths, "configs")
+
+	// Should use minimum interval
+	assert.Equal(t, 60, config.Schedule["file_events"].Interval)
+}
+
+func TestGenerateConfigNoFIM(t *testing.T) {
+	r := &OsqueryAgentReconciler{}
+
+	agent := &osqueryv1alpha1.OsqueryAgent{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "test-agent",
+		},
+		Spec: osqueryv1alpha1.OsqueryAgentSpec{},
+	}
+
+	config, err := r.generateConfig(agent, nil, nil)
+	require.NoError(t, err)
+
+	_, hasFileEvents := config.Options["enable_file_events"]
+	assert.False(t, hasFileEvents)
+	assert.Empty(t, config.FilePaths)
+	assert.Empty(t, config.ExcludePaths)
+	assert.NotContains(t, config.Schedule, "file_events")
+}
+
+func TestNodeSelectorOverlaps(t *testing.T) {
+	tests := []struct {
+		name           string
+		agentSelector  map[string]string
+		policySelector map[string]string
+		expected       bool
+	}{
+		{
+			name:           "both empty",
+			agentSelector:  map[string]string{},
+			policySelector: map[string]string{},
+			expected:       true,
+		},
+		{
+			name:           "policy empty",
+			agentSelector:  map[string]string{"os": "linux"},
+			policySelector: map[string]string{},
+			expected:       true,
+		},
+		{
+			name:           "exact match",
+			agentSelector:  map[string]string{"os": "linux"},
+			policySelector: map[string]string{"os": "linux"},
+			expected:       true,
+		},
+		{
+			name:           "agent superset",
+			agentSelector:  map[string]string{"os": "linux", "role": "worker"},
+			policySelector: map[string]string{"os": "linux"},
+			expected:       true,
+		},
+		{
+			name:           "policy has extra key",
+			agentSelector:  map[string]string{"os": "linux"},
+			policySelector: map[string]string{"os": "linux", "fim": "enabled"},
+			expected:       true,
+		},
+		{
+			name:           "value mismatch",
+			agentSelector:  map[string]string{"os": "windows"},
+			policySelector: map[string]string{"os": "linux"},
+			expected:       false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := nodeSelectorOverlaps(tt.agentSelector, tt.policySelector)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
 }

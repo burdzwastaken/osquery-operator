@@ -67,6 +67,7 @@ rules:
   - osquery.burdz.net
   resources:
   - distributedqueries
+  - fileintegritypolicies
   - osqueryagents
   - osqueryalerts
   - queryresults
@@ -90,6 +91,7 @@ rules:
   - osquery.burdz.net
   resources:
   - distributedqueries/status
+  - fileintegritypolicies/status
   - osqueryagents/status
   - osqueryalerts/status
   - queryresults/status

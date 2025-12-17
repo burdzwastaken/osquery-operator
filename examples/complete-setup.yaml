@@ -281,3 +281,21 @@ spec:
     kubernetes:
       createEvent: true
       eventType: Warning
+---
+# Test FileIntegrityPolicy for binaries
+apiVersion: osquery.burdz.net/v1alpha1
+kind: FileIntegrityPolicy
+metadata:
+  name: critical-binaries
+  namespace: osquery-system
+spec:
+  paths:
+    - /usr/bin/sudo
+    - /usr/bin/ssh
+    - /etc/passwd
+    - /etc/shadow
+    - /etc/sudoers
+  exclude:
+    - /etc/*.swp
+  severity: critical
+  interval: 60
