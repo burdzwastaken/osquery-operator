@@ -20,11 +20,15 @@
             gotools
             kubectl
             minikube
+            osquery
             podman
           ];
 
           shellHook = ''
             echo "osquery-operator development environment loaded!"
+            echo ""
+            echo "osquery tools:"
+            echo "  osquery version: $(osqueryd --version | awk '{print $3}')"
             echo ""
             echo "dev tools:"
             echo "  go version: $(go version)"
