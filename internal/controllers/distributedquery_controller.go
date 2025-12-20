@@ -3,7 +3,6 @@ package controllers
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -32,15 +31,6 @@ type DistributedQueryReconciler struct {
 // +kubebuilder:rbac:groups=core,resources=configmaps,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=core,resources=pods,verbs=get;list;watch
 // +kubebuilder:rbac:groups=core,resources=pods/exec,verbs=create
-
-// Query execution phases
-const (
-	PhasePending   = "Pending"
-	PhaseRunning   = "Running"
-	PhaseCompleted = "Completed"
-	PhaseFailed    = "Failed"
-	PhaseTimedOut  = "TimedOut"
-)
 
 // Reconcile handles DistributedQuery lifecycle: dispatches queries to nodes,
 // monitors for results, handles timeouts, and cleans up after TTL expiry.
@@ -84,17 +74,9 @@ func (r *DistributedQueryReconciler) handleTTL(_ context.Context, dq *osqueryv1a
 		return false, nil
 	}
 
-	ttl, err := time.ParseDuration(dq.Spec.TTL)
-	if err != nil {
-		ttl = time.Hour
-	}
-
+	ttl := ParseDurationOrDefault(dq.Spec.TTL, time.Hour)
 	expiresAt := dq.Status.CompletionTime.Add(ttl)
-	if time.Now().After(expiresAt) {
-		return true, nil
-	}
-
-	return false, nil
+	return time.Now().After(expiresAt), nil
 }
 
 func (r *DistributedQueryReconciler) handlePending(ctx context.Context, dq *osqueryv1alpha1.DistributedQuery) (ctrl.Result, error) {
@@ -142,10 +124,7 @@ func (r *DistributedQueryReconciler) handlePending(ctx context.Context, dq *osqu
 func (r *DistributedQueryReconciler) handleRunning(ctx context.Context, dq *osqueryv1alpha1.DistributedQuery) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 
-	timeout, err := time.ParseDuration(dq.Spec.Timeout)
-	if err != nil {
-		timeout = 60 * time.Second
-	}
+	timeout := ParseDurationOrDefault(dq.Spec.Timeout, 60*time.Second)
 
 	if dq.Status.StartTime != nil && time.Since(dq.Status.StartTime.Time) > timeout {
 		logger.Info("Distributed query timed out")
@@ -219,7 +198,7 @@ func (r *DistributedQueryReconciler) getTargetNodes(ctx context.Context, dq *osq
 
 	var targetNodes []string
 	for _, node := range nodeList.Items {
-		if matchesNodeSelector(node.Labels, dq.Spec.NodeSelector) {
+		if LabelsMatch(node.Labels, dq.Spec.NodeSelector) {
 			targetNodes = append(targetNodes, node.Name)
 		}
 	}
@@ -242,7 +221,7 @@ func (r *DistributedQueryReconciler) createQueryConfigMap(ctx context.Context, d
 
 	cm := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      fmt.Sprintf("dq-%s", dq.Name),
+			Name:      "dq-" + dq.Name,
 			Namespace: dq.Namespace,
 			Labels: map[string]string{
 				AnnotationDistributedQuery: dq.Name,

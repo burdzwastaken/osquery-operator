@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"regexp"
@@ -14,7 +15,7 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/errors"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -29,8 +30,9 @@ import (
 // OsqueryAlertReconciler reconciles OsqueryAlert objects
 type OsqueryAlertReconciler struct {
 	client.Client
-	Scheme   *runtime.Scheme
-	Recorder record.EventRecorder
+	Scheme     *runtime.Scheme
+	Recorder   record.EventRecorder
+	HTTPClient *http.Client
 
 	throttleCache map[string][]time.Time
 	throttleMu    sync.RWMutex
@@ -48,7 +50,7 @@ func (r *OsqueryAlertReconciler) Reconcile(ctx context.Context, req ctrl.Request
 
 	alert := &osqueryv1alpha1.OsqueryAlert{}
 	if err := r.Get(ctx, req.NamespacedName, alert); err != nil {
-		if errors.IsNotFound(err) {
+		if apierrors.IsNotFound(err) {
 			return ctrl.Result{}, nil
 		}
 		return ctrl.Result{}, err
@@ -137,7 +139,7 @@ func (r *OsqueryAlertReconciler) getMatchingResults(ctx context.Context, alert *
 		}
 
 		if len(alert.Spec.QuerySelector.MatchLabels) > 0 {
-			if !labelsMatch(result.Labels, alert.Spec.QuerySelector.MatchLabels) {
+			if !LabelsMatch(result.Labels, alert.Spec.QuerySelector.MatchLabels) {
 				continue
 			}
 		}
@@ -146,15 +148,6 @@ func (r *OsqueryAlertReconciler) getMatchingResults(ctx context.Context, alert *
 	}
 
 	return matched, nil
-}
-
-func labelsMatch(have, want map[string]string) bool {
-	for k, v := range want {
-		if have[k] != v {
-			return false
-		}
-	}
-	return true
 }
 
 func (r *OsqueryAlertReconciler) evaluateCondition(alert *osqueryv1alpha1.OsqueryAlert, result *osqueryv1alpha1.QueryResult) bool {
@@ -292,15 +285,8 @@ func (r *OsqueryAlertReconciler) isThrottled(alert *osqueryv1alpha1.OsqueryAlert
 		return false
 	}
 
-	period, err := time.ParseDuration(alert.Spec.Throttle.Period)
-	if err != nil {
-		period = 15 * time.Minute
-	}
-
-	maxAlerts := alert.Spec.Throttle.MaxAlerts
-	if maxAlerts <= 0 {
-		maxAlerts = 1
-	}
+	period := ParseDurationOrDefault(alert.Spec.Throttle.Period, 15*time.Minute)
+	maxAlerts := max(alert.Spec.Throttle.MaxAlerts, 1)
 
 	key := r.buildThrottleKey(alert, result)
 
@@ -336,19 +322,11 @@ func (r *OsqueryAlertReconciler) recordThrottle(alert *osqueryv1alpha1.OsqueryAl
 	r.throttleCache[key] = append(r.throttleCache[key], time.Now())
 
 	if alert.Spec.Throttle != nil {
-		period, _ := time.ParseDuration(alert.Spec.Throttle.Period)
-		if period == 0 {
-			period = 15 * time.Minute
-		}
+		period := ParseDurationOrDefault(alert.Spec.Throttle.Period, 15*time.Minute)
 		cutoff := time.Now().Add(-period * 2)
-
-		var cleaned []time.Time
-		for _, t := range r.throttleCache[key] {
-			if t.After(cutoff) {
-				cleaned = append(cleaned, t)
-			}
-		}
-		r.throttleCache[key] = cleaned
+		r.throttleCache[key] = slices.DeleteFunc(r.throttleCache[key], func(t time.Time) bool {
+			return !t.After(cutoff)
+		})
 	}
 }
 
@@ -410,11 +388,7 @@ func (r *OsqueryAlertReconciler) fireAlert(ctx context.Context, alert *osqueryv1
 		}
 	}
 
-	if len(errs) > 0 {
-		return fmt.Errorf("notification errors: %v", errs)
-	}
-
-	return nil
+	return errors.Join(errs...)
 }
 
 func (r *OsqueryAlertReconciler) sendKubernetesEvent(_ context.Context, alert *osqueryv1alpha1.OsqueryAlert, result *osqueryv1alpha1.QueryResult) error {
@@ -436,7 +410,7 @@ func (r *OsqueryAlertReconciler) sendKubernetesEvent(_ context.Context, alert *o
 		if len(sample) > 200 {
 			sample = append(sample[:200], []byte("...")...)
 		}
-		message += fmt.Sprintf(" Sample: %s", string(sample))
+		message += " Sample: " + string(sample)
 	}
 
 	r.Recorder.Event(alert, eventType, "AlertTriggered", message)
@@ -455,7 +429,7 @@ func (r *OsqueryAlertReconciler) sendSlackNotification(ctx context.Context, aler
 
 	webhookURL := string(secret.Data["webhook-url"])
 	if webhookURL == "" {
-		return fmt.Errorf("webhook-url not found in secret")
+		return errors.New("webhook-url not found in secret")
 	}
 
 	color := r.severityToColor(alert.Spec.Severity)
@@ -463,11 +437,11 @@ func (r *OsqueryAlertReconciler) sendSlackNotification(ctx context.Context, aler
 		"attachments": []map[string]any{
 			{
 				"color": color,
-				"title": fmt.Sprintf("Osquery Alert: %s", alert.Name),
+				"title": "Osquery Alert: " + alert.Name,
 				"text":  fmt.Sprintf("Query `%s` triggered on node `%s`", result.Spec.QueryName, result.Spec.NodeName),
 				"fields": []map[string]any{
 					{"title": "Severity", "value": alert.Spec.Severity, "short": true},
-					{"title": "Rows", "value": fmt.Sprintf("%d", len(result.Spec.Rows)), "short": true},
+					{"title": "Rows", "value": strconv.Itoa(len(result.Spec.Rows)), "short": true},
 					{"title": "Node", "value": result.Spec.NodeName, "short": true},
 					{"title": "Query", "value": result.Spec.QueryName, "short": true},
 				},
@@ -527,8 +501,7 @@ func (r *OsqueryAlertReconciler) sendWebhookNotification(ctx context.Context, al
 		}
 	}
 
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := r.getHTTPClient().Do(req)
 	if err != nil {
 		return err
 	}
@@ -553,8 +526,7 @@ func (r *OsqueryAlertReconciler) postJSON(ctx context.Context, url string, paylo
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := r.getHTTPClient().Do(req)
 	if err != nil {
 		return err
 	}
@@ -585,6 +557,15 @@ func (r *OsqueryAlertReconciler) severityToColor(severity string) string {
 func (r *OsqueryAlertReconciler) markResultAlerted(ctx context.Context, result *osqueryv1alpha1.QueryResult, alertName string) error {
 	result.Status.AlertsFired = append(result.Status.AlertsFired, alertName)
 	return r.Status().Update(ctx, result)
+}
+
+var defaultHTTPClient = &http.Client{Timeout: 10 * time.Second}
+
+func (r *OsqueryAlertReconciler) getHTTPClient() *http.Client {
+	if r.HTTPClient != nil {
+		return r.HTTPClient
+	}
+	return defaultHTTPClient
 }
 
 // SetupWithManager sets up the controller with the Manager.

@@ -619,7 +619,7 @@ func TestLabelsMatch(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := labelsMatch(tt.have, tt.want)
+			result := LabelsMatch(tt.have, tt.want)
 			assert.Equal(t, tt.expected, result)
 		})
 	}

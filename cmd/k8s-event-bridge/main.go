@@ -131,7 +131,7 @@ func (s *KubernetesSink) Send(ctx context.Context, results []OsqueryResult) erro
 				Name:      s.nodeName,
 				Namespace: s.namespace,
 			},
-			Reason:  fmt.Sprintf("OsqueryResult-%s", result.Name),
+			Reason:  "OsqueryResult-" + result.Name,
 			Message: formatResultMessage(result),
 			Type:    "Normal",
 			Source: corev1.EventSource{
@@ -182,17 +182,18 @@ func (s *KubernetesSink) Close() error {
 func formatResultMessage(result OsqueryResult) string {
 	var rows []map[string]string
 
-	if result.Snapshot != nil {
+	switch {
+	case result.Snapshot != nil:
 		rows = result.Snapshot
-	} else if result.DiffResults != nil {
+	case result.DiffResults != nil:
 		rows = append(rows, result.DiffResults.Added...)
 		rows = append(rows, result.DiffResults.Removed...)
-	} else if result.Columns != nil {
+	case result.Columns != nil:
 		rows = []map[string]string{result.Columns}
 	}
 
 	if len(rows) == 0 {
-		return fmt.Sprintf("Query '%s' returned no results", result.Name)
+		return "Query '" + result.Name + "' returned no results"
 	}
 
 	msg := fmt.Sprintf("Query '%s' returned %d rows", result.Name, len(rows))
@@ -201,7 +202,7 @@ func formatResultMessage(result OsqueryResult) string {
 		if len(sample) > 200 {
 			sample = append(sample[:200], []byte("...")...)
 		}
-		msg += fmt.Sprintf(". Sample: %s", string(sample))
+		msg += ". Sample: " + string(sample)
 	}
 
 	return msg
@@ -264,7 +265,7 @@ func (p *ResultProcessor) Start(ctx context.Context) error {
 }
 
 func (p *ResultProcessor) tailFile(ctx context.Context, path string) {
-	file, err := os.Open(path)
+	file, err := os.Open(path) //nolint:gosec // G304: path comes from internal filepath.Join, not user input
 	if err != nil {
 		klog.Errorf("Failed to open file %s: %v", path, err)
 		return

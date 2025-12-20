@@ -71,16 +71,16 @@ func (r *QueryResultReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 func (r *QueryResultReconciler) getRetentionPeriod(result *osqueryv1alpha1.QueryResult) time.Duration {
 	if result.Annotations != nil {
 		if retentionStr, ok := result.Annotations[AnnotationRetention]; ok {
-			if retention, err := time.ParseDuration(retentionStr); err == nil {
-				return retention
-			}
+			return ParseDurationOrDefault(retentionStr, r.getDefaultRetention())
 		}
 	}
+	return r.getDefaultRetention()
+}
 
+func (r *QueryResultReconciler) getDefaultRetention() time.Duration {
 	if r.RetentionPeriod > 0 {
 		return r.RetentionPeriod
 	}
-
 	return DefaultRetentionPeriod
 }
 

@@ -12,4 +12,10 @@ const (
 
 	LabelValueName      = "osquery"
 	LabelValueManagedBy = "osquery-operator"
+
+	PhasePending   = "Pending"
+	PhaseRunning   = "Running"
+	PhaseCompleted = "Completed"
+	PhaseFailed    = "Failed"
+	PhaseTimedOut  = "TimedOut"
 )

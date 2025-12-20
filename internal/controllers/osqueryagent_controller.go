@@ -310,7 +310,7 @@ func (r *OsqueryAgentReconciler) reconcileConfigMap(ctx context.Context, agent *
 
 	cm := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      fmt.Sprintf("%s-config", agent.Name),
+			Name:      agent.Name + "-config",
 			Namespace: targetNamespace,
 			Labels: map[string]string{
 				LabelName:      LabelValueName,
@@ -328,13 +328,15 @@ func (r *OsqueryAgentReconciler) reconcileConfigMap(ctx context.Context, agent *
 
 	found := &corev1.ConfigMap{}
 	err = r.Get(ctx, types.NamespacedName{Name: cm.Name, Namespace: cm.Namespace}, found)
-	if err != nil && errors.IsNotFound(err) {
+
+	switch {
+	case errors.IsNotFound(err):
 		if err := r.Create(ctx, cm); err != nil {
 			return "", err
 		}
-	} else if err != nil {
+	case err != nil:
 		return "", err
-	} else {
+	default:
 		found.Data = cm.Data
 		found.Labels = cm.Labels
 		found.Annotations = cm.Annotations
@@ -490,7 +492,7 @@ func (r *OsqueryAgentReconciler) buildDaemonSet(agent *osqueryv1alpha1.OsqueryAg
 			VolumeSource: corev1.VolumeSource{
 				ConfigMap: &corev1.ConfigMapVolumeSource{
 					LocalObjectReference: corev1.LocalObjectReference{
-						Name: fmt.Sprintf("%s-config", agent.Name),
+						Name: agent.Name + "-config",
 					},
 				},
 			},
@@ -532,7 +534,7 @@ func (r *OsqueryAgentReconciler) buildDaemonSet(agent *osqueryv1alpha1.OsqueryAg
 
 	return &appsv1.DaemonSet{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      fmt.Sprintf("%s-osquery", agent.Name),
+			Name:      agent.Name + "-osquery",
 			Namespace: getTargetNamespace(agent),
 			Labels:    labels,
 			Annotations: map[string]string{
@@ -579,7 +581,7 @@ func (r *OsqueryAgentReconciler) updateStatus(ctx context.Context, agent *osquer
 
 	ds := &appsv1.DaemonSet{}
 	dsName := types.NamespacedName{
-		Name:      fmt.Sprintf("%s-osquery", agent.Name),
+		Name:      agent.Name + "-osquery",
 		Namespace: getTargetNamespace(agent),
 	}
 	readyNodes := int32(0)
@@ -603,15 +605,7 @@ func (r *OsqueryAgentReconciler) updateStatus(ctx context.Context, agent *osquer
 }
 
 func matchesNodeSelector(nodeLabels, selector map[string]string) bool {
-	if selector == nil {
-		return true
-	}
-	for k, v := range selector {
-		if nodeLabels[k] != v {
-			return false
-		}
-	}
-	return true
+	return LabelsMatch(nodeLabels, selector)
 }
 
 // SetupWithManager sets up the controller with the Manager.
