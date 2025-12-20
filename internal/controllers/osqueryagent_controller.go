@@ -10,11 +10,14 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	osqueryv1alpha1 "github.com/burdzwastaken/osquery-operator/api/v1alpha1"
 )
@@ -614,5 +617,84 @@ func (r *OsqueryAgentReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		For(&osqueryv1alpha1.OsqueryAgent{}).
 		Owns(&appsv1.DaemonSet{}).
 		Owns(&corev1.ConfigMap{}).
+		Watches(&osqueryv1alpha1.OsqueryPack{}, handler.EnqueueRequestsFromMapFunc(r.findAgentsForPack)).
+		Watches(&osqueryv1alpha1.FileIntegrityPolicy{}, handler.EnqueueRequestsFromMapFunc(r.findAgentsForFIMPolicy)).
 		Complete(r)
+}
+
+func (r *OsqueryAgentReconciler) findAgentsForPack(ctx context.Context, obj client.Object) []reconcile.Request {
+	pack, ok := obj.(*osqueryv1alpha1.OsqueryPack)
+	if !ok {
+		return nil
+	}
+
+	agentList := &osqueryv1alpha1.OsqueryAgentList{}
+	if err := r.List(ctx, agentList); err != nil {
+		return nil
+	}
+
+	var requests []reconcile.Request
+	for _, agent := range agentList.Items {
+		if r.packMatchesAgent(pack, &agent) {
+			requests = append(requests, reconcile.Request{
+				NamespacedName: types.NamespacedName{
+					Name: agent.Name,
+				},
+			})
+		}
+	}
+	return requests
+}
+
+func (r *OsqueryAgentReconciler) packMatchesAgent(pack *osqueryv1alpha1.OsqueryPack, agent *osqueryv1alpha1.OsqueryAgent) bool {
+	if agent.Spec.PackSelector == nil {
+		return true
+	}
+
+	selector, err := metav1.LabelSelectorAsSelector(agent.Spec.PackSelector)
+	if err != nil {
+		return false
+	}
+
+	return selector.Matches(labels.Set(pack.Labels))
+}
+
+func (r *OsqueryAgentReconciler) findAgentsForFIMPolicy(ctx context.Context, obj client.Object) []reconcile.Request {
+	policy, ok := obj.(*osqueryv1alpha1.FileIntegrityPolicy)
+	if !ok {
+		return nil
+	}
+
+	agentList := &osqueryv1alpha1.OsqueryAgentList{}
+	if err := r.List(ctx, agentList); err != nil {
+		return nil
+	}
+
+	var requests []reconcile.Request
+	for _, agent := range agentList.Items {
+		if r.fimPolicyMatchesAgent(policy, &agent) {
+			requests = append(requests, reconcile.Request{
+				NamespacedName: types.NamespacedName{
+					Name: agent.Name,
+				},
+			})
+		}
+	}
+	return requests
+}
+
+func (r *OsqueryAgentReconciler) fimPolicyMatchesAgent(policy *osqueryv1alpha1.FileIntegrityPolicy, agent *osqueryv1alpha1.OsqueryAgent) bool {
+	if policy.Spec.Disabled {
+		return false
+	}
+
+	if len(policy.Spec.NodeSelector) == 0 {
+		return true
+	}
+
+	if len(agent.Spec.NodeSelector) == 0 {
+		return true
+	}
+
+	return nodeSelectorOverlaps(agent.Spec.NodeSelector, policy.Spec.NodeSelector)
 }

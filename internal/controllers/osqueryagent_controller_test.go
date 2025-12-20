@@ -825,3 +825,210 @@ func TestNodeSelectorOverlaps(t *testing.T) {
 		})
 	}
 }
+
+func TestPackMatchesAgent(t *testing.T) {
+	r := &OsqueryAgentReconciler{}
+
+	tests := []struct {
+		name     string
+		pack     *osqueryv1alpha1.OsqueryPack
+		agent    *osqueryv1alpha1.OsqueryAgent
+		expected bool
+	}{
+		{
+			name: "nil selector matches all packs",
+			pack: &osqueryv1alpha1.OsqueryPack{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:   "test-pack",
+					Labels: map[string]string{"team": "security"},
+				},
+			},
+			agent: &osqueryv1alpha1.OsqueryAgent{
+				Spec: osqueryv1alpha1.OsqueryAgentSpec{
+					PackSelector: nil,
+				},
+			},
+			expected: true,
+		},
+		{
+			name: "matching label selector",
+			pack: &osqueryv1alpha1.OsqueryPack{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:   "test-pack",
+					Labels: map[string]string{"osquery.burdz.net/enabled": "true"},
+				},
+			},
+			agent: &osqueryv1alpha1.OsqueryAgent{
+				Spec: osqueryv1alpha1.OsqueryAgentSpec{
+					PackSelector: &metav1.LabelSelector{
+						MatchLabels: map[string]string{"osquery.burdz.net/enabled": "true"},
+					},
+				},
+			},
+			expected: true,
+		},
+		{
+			name: "non-matching label selector",
+			pack: &osqueryv1alpha1.OsqueryPack{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:   "test-pack",
+					Labels: map[string]string{"osquery.burdz.net/enabled": "false"},
+				},
+			},
+			agent: &osqueryv1alpha1.OsqueryAgent{
+				Spec: osqueryv1alpha1.OsqueryAgentSpec{
+					PackSelector: &metav1.LabelSelector{
+						MatchLabels: map[string]string{"osquery.burdz.net/enabled": "true"},
+					},
+				},
+			},
+			expected: false,
+		},
+		{
+			name: "pack without labels doesn't match selector",
+			pack: &osqueryv1alpha1.OsqueryPack{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "test-pack",
+				},
+			},
+			agent: &osqueryv1alpha1.OsqueryAgent{
+				Spec: osqueryv1alpha1.OsqueryAgentSpec{
+					PackSelector: &metav1.LabelSelector{
+						MatchLabels: map[string]string{"osquery.burdz.net/enabled": "true"},
+					},
+				},
+			},
+			expected: false,
+		},
+		{
+			name: "multiple labels all match",
+			pack: &osqueryv1alpha1.OsqueryPack{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:   "test-pack",
+					Labels: map[string]string{"team": "security", "env": "prod"},
+				},
+			},
+			agent: &osqueryv1alpha1.OsqueryAgent{
+				Spec: osqueryv1alpha1.OsqueryAgentSpec{
+					PackSelector: &metav1.LabelSelector{
+						MatchLabels: map[string]string{"team": "security", "env": "prod"},
+					},
+				},
+			},
+			expected: true,
+		},
+		{
+			name: "multiple labels partial match fails",
+			pack: &osqueryv1alpha1.OsqueryPack{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:   "test-pack",
+					Labels: map[string]string{"team": "security"},
+				},
+			},
+			agent: &osqueryv1alpha1.OsqueryAgent{
+				Spec: osqueryv1alpha1.OsqueryAgentSpec{
+					PackSelector: &metav1.LabelSelector{
+						MatchLabels: map[string]string{"team": "security", "env": "prod"},
+					},
+				},
+			},
+			expected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := r.packMatchesAgent(tt.pack, tt.agent)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+func TestFIMPolicyMatchesAgent(t *testing.T) {
+	r := &OsqueryAgentReconciler{}
+
+	tests := []struct {
+		name     string
+		policy   *osqueryv1alpha1.FileIntegrityPolicy
+		agent    *osqueryv1alpha1.OsqueryAgent
+		expected bool
+	}{
+		{
+			name: "disabled policy never matches",
+			policy: &osqueryv1alpha1.FileIntegrityPolicy{
+				Spec: osqueryv1alpha1.FileIntegrityPolicySpec{
+					Disabled: true,
+					Paths:    []string{"/etc/passwd"},
+				},
+			},
+			agent: &osqueryv1alpha1.OsqueryAgent{
+				Spec: osqueryv1alpha1.OsqueryAgentSpec{},
+			},
+			expected: false,
+		},
+		{
+			name: "policy without nodeSelector matches all agents",
+			policy: &osqueryv1alpha1.FileIntegrityPolicy{
+				Spec: osqueryv1alpha1.FileIntegrityPolicySpec{
+					Paths: []string{"/etc/passwd"},
+				},
+			},
+			agent: &osqueryv1alpha1.OsqueryAgent{
+				Spec: osqueryv1alpha1.OsqueryAgentSpec{
+					NodeSelector: map[string]string{"os": "linux"},
+				},
+			},
+			expected: true,
+		},
+		{
+			name: "agent without nodeSelector matches all policies",
+			policy: &osqueryv1alpha1.FileIntegrityPolicy{
+				Spec: osqueryv1alpha1.FileIntegrityPolicySpec{
+					Paths:        []string{"/etc/passwd"},
+					NodeSelector: map[string]string{"os": "linux"},
+				},
+			},
+			agent: &osqueryv1alpha1.OsqueryAgent{
+				Spec: osqueryv1alpha1.OsqueryAgentSpec{},
+			},
+			expected: true,
+		},
+		{
+			name: "overlapping nodeSelectors match",
+			policy: &osqueryv1alpha1.FileIntegrityPolicy{
+				Spec: osqueryv1alpha1.FileIntegrityPolicySpec{
+					Paths:        []string{"/etc/passwd"},
+					NodeSelector: map[string]string{"os": "linux"},
+				},
+			},
+			agent: &osqueryv1alpha1.OsqueryAgent{
+				Spec: osqueryv1alpha1.OsqueryAgentSpec{
+					NodeSelector: map[string]string{"os": "linux"},
+				},
+			},
+			expected: true,
+		},
+		{
+			name: "conflicting nodeSelectors don't match",
+			policy: &osqueryv1alpha1.FileIntegrityPolicy{
+				Spec: osqueryv1alpha1.FileIntegrityPolicySpec{
+					Paths:        []string{"/etc/passwd"},
+					NodeSelector: map[string]string{"os": "windows"},
+				},
+			},
+			agent: &osqueryv1alpha1.OsqueryAgent{
+				Spec: osqueryv1alpha1.OsqueryAgentSpec{
+					NodeSelector: map[string]string{"os": "linux"},
+				},
+			},
+			expected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := r.fimPolicyMatchesAgent(tt.policy, tt.agent)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}

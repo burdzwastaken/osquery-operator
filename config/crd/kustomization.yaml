@@ -7,3 +7,4 @@ resources:
   - bases/osquery.burdz.net_osqueryalerts.yaml
   - bases/osquery.burdz.net_osquerypacks.yaml
   - bases/osquery.burdz.net_queryresults.yaml
+  - bases/osquery.burdz.net_fileintegritypolicies.yaml
