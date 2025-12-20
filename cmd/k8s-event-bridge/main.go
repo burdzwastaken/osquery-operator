@@ -4,11 +4,13 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -116,6 +118,7 @@ func NewKubernetesSink(nodeName, namespace string) (*KubernetesSink, error) {
 }
 
 func (s *KubernetesSink) Send(ctx context.Context, results []OsqueryResult) error {
+	var errs []error
 	for _, result := range results {
 		if !s.shouldCreateEvent(result) {
 			continue
@@ -123,7 +126,7 @@ func (s *KubernetesSink) Send(ctx context.Context, results []OsqueryResult) erro
 
 		event := &corev1.Event{
 			ObjectMeta: metav1.ObjectMeta{
-				Name:      fmt.Sprintf("osquery-%s-%d", result.Name, result.UnixTime),
+				Name:      "osquery-" + result.Name + "-" + strconv.FormatInt(result.UnixTime, 10),
 				Namespace: s.namespace,
 			},
 			InvolvedObject: corev1.ObjectReference{
@@ -143,13 +146,13 @@ func (s *KubernetesSink) Send(ctx context.Context, results []OsqueryResult) erro
 			Count:          1,
 		}
 
-		_, err := s.clientset.CoreV1().Events(s.namespace).Create(ctx, event, metav1.CreateOptions{})
-		if err != nil {
+		if _, err := s.clientset.CoreV1().Events(s.namespace).Create(ctx, event, metav1.CreateOptions{}); err != nil {
 			klog.Errorf("Failed to create event: %v", err)
+			errs = append(errs, err)
 		}
 	}
 
-	return nil
+	return errors.Join(errs...)
 }
 
 func (s *KubernetesSink) shouldCreateEvent(result OsqueryResult) bool {

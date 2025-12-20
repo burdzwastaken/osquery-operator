@@ -151,6 +151,10 @@ func (r *DistributedQueryReconciler) handleRunning(ctx context.Context, dq *osqu
 		result, err := r.checkNodeResult(ctx, dq, nodeResult.NodeName)
 		if err != nil {
 			logger.Error(err, "Error checking node result", "node", nodeResult.NodeName)
+			dq.Status.NodeResults[i].Status = PhaseFailed
+			dq.Status.NodeResults[i].Error = err.Error()
+			dq.Status.FailedNodes++
+			updated = true
 			continue
 		}
 
