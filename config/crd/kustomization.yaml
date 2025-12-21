@@ -2,9 +2,10 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
 resources:
+  - bases/osquery.burdz.net_compliancepolicies.yaml
   - bases/osquery.burdz.net_distributedqueries.yaml
+  - bases/osquery.burdz.net_fileintegritypolicies.yaml
   - bases/osquery.burdz.net_osqueryagents.yaml
   - bases/osquery.burdz.net_osqueryalerts.yaml
   - bases/osquery.burdz.net_osquerypacks.yaml
   - bases/osquery.burdz.net_queryresults.yaml
-  - bases/osquery.burdz.net_fileintegritypolicies.yaml

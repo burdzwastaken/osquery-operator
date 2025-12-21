@@ -460,13 +460,24 @@ func (r *OsqueryAgentReconciler) buildDaemonSet(agent *osqueryv1alpha1.OsqueryAg
 		}
 
 		if eventBridgeEnabled {
+			createEvents := true
+			createQueryResults := false
+			if agent.Spec.EventBridge != nil {
+				createEvents = agent.Spec.EventBridge.CreateEvents
+				createQueryResults = agent.Spec.EventBridge.CreateQueryResults
+			}
+
+			args := []string{
+				"--log-path=/var/log/osquery",
+				fmt.Sprintf("--create-events=%t", createEvents),
+				fmt.Sprintf("--create-query-results=%t", createQueryResults),
+			}
+
 			containers = append(containers, corev1.Container{
 				Name:            "k8s-event-bridge",
 				Image:           eventBridgeImage,
 				ImagePullPolicy: agent.Spec.ImagePullPolicy,
-				Args: []string{
-					"--log-path=/var/log/osquery",
-				},
+				Args:            args,
 				Env: []corev1.EnvVar{
 					{
 						Name: "NODE_NAME",

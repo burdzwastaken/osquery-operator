@@ -10,6 +10,7 @@ A Kubernetes operator for managing [osquery](https://osquery.io/) deployments as
 - **DistributedQuery** - Run ad-hoc queries across all nodes
 - **QueryResult** - Store results in-cluster as custom resources
 - **OsqueryAlert** - Alert on query results with Slack & webhook support
+- **CompliancePolicy** - Define compliance frameworks (CIS, PCI-DSS) with automatic scoring
 
 ## Quick Start
 
@@ -152,6 +153,52 @@ spec:
         name: slack-security-webhook
         namespace: osquery-system
 ```
+
+### CompliancePolicy
+
+Define compliance frameworks with automatic pass/fail scoring:
+
+```yaml
+apiVersion: osquery.burdz.net/v1alpha1
+kind: CompliancePolicy
+metadata:
+  name: cis-linux-baseline
+spec:
+  framework: cis
+  version: "1.8.0"
+  platform: linux
+
+  controls:
+    - id: "5.2.8"
+      title: "Ensure SSH root login is disabled"
+      query: |
+        SELECT * FROM ssh_configs
+        WHERE key = 'PermitRootLogin' AND value != 'no';
+      severity: critical
+      interval: 1800
+      remediation: "Set 'PermitRootLogin no' in /etc/ssh/sshd_config"
+      expectation:
+        type: rowCount
+        operator: equals
+        value: 0
+
+    - id: "6.1.2"
+      title: "Ensure permissions on /etc/passwd are configured"
+      query: |
+        SELECT path, mode, uid, gid FROM file
+        WHERE path = '/etc/passwd'
+        AND (mode != '0644' OR uid != '0' OR gid != '0');
+      severity: high
+      interval: 3600
+      remediation: "Run: chmod 644 /etc/passwd && chown root:root /etc/passwd"
+```
+
+Status shows:
+- `score`: Percentage of passing controls (0-100)
+- `passingControls` / `failingControls`: Count of each
+- `controlResults`: Per-control pass/fail with last checked time
+
+**How scoring works**: Each control's query is expected to return 0 rows (no violations found). If `expectation` is omitted, `rowCount equals 0` is the default. A control passes when its query result matches the expectation.
 
 ## Development
 

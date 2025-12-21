@@ -1,0 +1,305 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.19.0
+  name: compliancepolicies.osquery.burdz.net
+spec:
+  group: osquery.burdz.net
+  names:
+    kind: CompliancePolicy
+    listKind: CompliancePolicyList
+    plural: compliancepolicies
+    shortNames:
+    - cp
+    singular: compliancepolicy
+  scope: Cluster
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.framework
+      name: Framework
+      type: string
+    - format: float
+      jsonPath: .status.score
+      name: Score
+      type: number
+    - jsonPath: .status.passingControls
+      name: Passing
+      type: integer
+    - jsonPath: .status.failingControls
+      name: Failing
+      type: integer
+    - jsonPath: .spec.disabled
+      name: Disabled
+      type: boolean
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: CompliancePolicy is the Schema for the compliancepolicies API
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: CompliancePolicySpec defines the desired state of CompliancePolicy
+            properties:
+              controls:
+                description: Controls defines the individual compliance checks
+                items:
+                  description: ComplianceControl defines a single compliance check
+                  properties:
+                    description:
+                      description: Description provides detailed information about
+                        the control
+                      type: string
+                    disabled:
+                      default: false
+                      description: Disabled allows temporarily disabling this control
+                      type: boolean
+                    expectation:
+                      description: Expectation defines what constitutes a passing
+                        result
+                      properties:
+                        operator:
+                          default: equals
+                          description: Operator for the comparison
+                          enum:
+                          - equals
+                          - lessThan
+                          - greaterThan
+                          - lessThanOrEqual
+                          - greaterThanOrEqual
+                          type: string
+                        type:
+                          default: rowCount
+                          description: Type of expectation check
+                          enum:
+                          - rowCount
+                          type: string
+                        value:
+                          default: 0
+                          description: Value to compare against
+                          type: integer
+                      type: object
+                    id:
+                      description: ID is the unique identifier for this control (e.g.,
+                        "5.1.1")
+                      minLength: 1
+                      type: string
+                    interval:
+                      default: 3600
+                      description: Interval in seconds between query executions
+                      minimum: 60
+                      type: integer
+                    query:
+                      description: Query is the osquery SQL to execute for this control
+                      minLength: 1
+                      type: string
+                    remediation:
+                      description: Remediation describes how to fix a failing control
+                      type: string
+                    severity:
+                      default: medium
+                      description: Severity of a failing control
+                      enum:
+                      - info
+                      - low
+                      - medium
+                      - high
+                      - critical
+                      type: string
+                    title:
+                      description: Title is a short description of the control
+                      minLength: 1
+                      type: string
+                  required:
+                  - id
+                  - query
+                  - title
+                  type: object
+                minItems: 1
+                type: array
+              disabled:
+                default: false
+                description: Disabled allows temporarily disabling this compliance
+                  policy
+                type: boolean
+              framework:
+                description: Framework identifies the compliance framework (e.g.,
+                  "cis", "pci-dss", "hipaa")
+                type: string
+              nodeSelector:
+                additionalProperties:
+                  type: string
+                description: NodeSelector targets specific nodes for compliance checks
+                type: object
+              platform:
+                default: linux
+                description: Platform restricts this policy to specific platforms
+                enum:
+                - linux
+                - darwin
+                - windows
+                type: string
+              version:
+                description: Version of the compliance framework
+                type: string
+            required:
+            - controls
+            type: object
+          status:
+            description: CompliancePolicyStatus defines the observed state of CompliancePolicy
+            properties:
+              conditions:
+                description: Conditions represent the latest available observations
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+              controlResults:
+                description: ControlResults contains per-control status
+                items:
+                  description: ControlResult contains the status of a single control
+                  properties:
+                    affectedNodes:
+                      description: AffectedNodes lists nodes where this control is
+                        failing
+                      items:
+                        type: string
+                      type: array
+                    id:
+                      description: ID matches the control ID
+                      type: string
+                    lastChecked:
+                      description: LastChecked is when this control was last evaluated
+                      format: date-time
+                      type: string
+                    message:
+                      description: Message provides additional context (especially
+                        for errors)
+                      type: string
+                    rowCount:
+                      description: RowCount is the number of rows returned by the
+                        query
+                      type: integer
+                    status:
+                      description: Status of the control
+                      enum:
+                      - passing
+                      - failing
+                      - error
+                      - unknown
+                      type: string
+                  required:
+                  - id
+                  - status
+                  type: object
+                type: array
+              failingControls:
+                description: FailingControls is the number of controls currently failing
+                type: integer
+              generatedPackName:
+                description: GeneratedPackName is the name of the OsqueryPack created
+                  for this policy
+                type: string
+              lastScanTime:
+                description: LastScanTime is when the compliance was last evaluated
+                format: date-time
+                type: string
+              lastUpdated:
+                description: LastUpdated is when the policy was last reconciled
+                format: date-time
+                type: string
+              passingControls:
+                description: PassingControls is the number of controls currently passing
+                type: integer
+              score:
+                description: Score is the compliance percentage (0-100)
+                maximum: 100
+                minimum: 0
+                type: integer
+              totalControls:
+                description: TotalControls is the number of controls in this policy
+                type: integer
+              unknownControls:
+                description: UnknownControls is the number of controls with unknown
+                  status
+                type: integer
+            type: object
+        required:
+        - metadata
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

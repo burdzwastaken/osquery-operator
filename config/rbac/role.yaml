@@ -66,10 +66,12 @@ rules:
 - apiGroups:
   - osquery.burdz.net
   resources:
+  - compliancepolicies
   - distributedqueries
   - fileintegritypolicies
   - osqueryagents
   - osqueryalerts
+  - osquerypacks
   - queryresults
   verbs:
   - create
@@ -82,6 +84,7 @@ rules:
 - apiGroups:
   - osquery.burdz.net
   resources:
+  - compliancepolicies/finalizers
   - distributedqueries/finalizers
   - osqueryagents/finalizers
   - osqueryalerts/finalizers
@@ -90,6 +93,7 @@ rules:
 - apiGroups:
   - osquery.burdz.net
   resources:
+  - compliancepolicies/status
   - distributedqueries/status
   - fileintegritypolicies/status
   - osqueryagents/status
@@ -99,11 +103,3 @@ rules:
   - get
   - patch
   - update
-- apiGroups:
-  - osquery.burdz.net
-  resources:
-  - osquerypacks
-  verbs:
-  - get
-  - list
-  - watch
