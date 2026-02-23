@@ -473,12 +473,17 @@ func (r *OsqueryAlertReconciler) sendWebhookNotification(ctx context.Context, al
 		"rows":      result.Spec.Rows,
 	}
 
+	webhookURL, err := ValidateURL(webhook.URL)
+	if err != nil {
+		return fmt.Errorf("invalid webhook URL: %w", err)
+	}
+
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return err
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", webhook.URL, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, "POST", webhookURL, bytes.NewReader(body))
 	if err != nil {
 		return err
 	}
@@ -501,7 +506,7 @@ func (r *OsqueryAlertReconciler) sendWebhookNotification(ctx context.Context, al
 		}
 	}
 
-	resp, err := r.getHTTPClient().Do(req)
+	resp, err := r.getHTTPClient().Do(req) //nolint:gosec // URL validated by ValidateURL
 	if err != nil {
 		return err
 	}
@@ -514,19 +519,24 @@ func (r *OsqueryAlertReconciler) sendWebhookNotification(ctx context.Context, al
 	return nil
 }
 
-func (r *OsqueryAlertReconciler) postJSON(ctx context.Context, url string, payload any) error {
+func (r *OsqueryAlertReconciler) postJSON(ctx context.Context, rawURL string, payload any) error {
+	validURL, err := ValidateURL(rawURL)
+	if err != nil {
+		return fmt.Errorf("invalid URL: %w", err)
+	}
+
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return err
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, "POST", validURL, bytes.NewReader(body))
 	if err != nil {
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := r.getHTTPClient().Do(req)
+	resp, err := r.getHTTPClient().Do(req) //nolint:gosec // URL validated by ValidateURL
 	if err != nil {
 		return err
 	}
