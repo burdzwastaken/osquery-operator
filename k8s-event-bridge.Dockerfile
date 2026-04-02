@@ -18,7 +18,7 @@ FROM alpine:3.23.0@sha256:51183f2cfa6320055da30872f211093f9ff1d3cf06f39a0bdb2123
 LABEL org.opencontainers.image.source=https://github.com/burdzwastaken/osquery-operator
 
 RUN addgroup -g 65532 nonroot && \
-    adduser -D -u 65532 -G nonroot nonroot
+    adduser -D -H -h /nonexistent -u 65532 -G nonroot -s /sbin/nologin nonroot
 USER 65532
 
 COPY --from=builder --chown=65532:65532 /build/k8s-event-bridge /usr/local/bin/
